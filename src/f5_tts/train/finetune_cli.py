@@ -71,7 +71,7 @@ def parse_args():
         action="store_true",
         help="Use 8-bit Adam optimizer from bitsandbytes",
     )
-
+    parser.add_argument("--use_lang",action="store_true", help="Use language embeding")
     return parser.parse_args()
 
 
@@ -173,7 +173,8 @@ def main():
         target_sample_rate=target_sample_rate,
         mel_spec_type=mel_spec_type,
     )
-
+    if args.use_lang:
+        model_cfg["lang_num"]=2
     model = CFM(
         transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
         mel_spec_kwargs=mel_spec_kwargs,
@@ -200,9 +201,10 @@ def main():
         log_samples=args.log_samples,
         last_per_updates=args.last_per_updates,
         bnb_optimizer=args.bnb_optimizer,
+        use_lang=args.use_lang,
     )
 
-    train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
+    train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs, use_lang=args.use_lang)
 
     trainer.train(
         train_dataset,

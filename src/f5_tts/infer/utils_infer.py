@@ -84,15 +84,15 @@ def chunk_text(text, max_chars=135):
     chunks = []
     current_chunk = ""
     # Split the text into sentences based on punctuation followed by whitespace
-    sentences = re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，。！？])", text)
+    sentences = re.split(r"(?<=[;:.!?])\s+|(?<=[；：。！？])", text)
 
     for sentence in sentences:
         if len(current_chunk.encode("utf-8")) + len(sentence.encode("utf-8")) <= max_chars:
-            current_chunk += sentence + " " if sentence and len(sentence[-1].encode("utf-8")) == 1 else sentence
+            current_chunk += sentence  if sentence and len(sentence[-1].encode("utf-8")) == 1 else sentence
         else:
             if current_chunk:
                 chunks.append(current_chunk.strip())
-            current_chunk = sentence + " " if sentence and len(sentence[-1].encode("utf-8")) == 1 else sentence
+            current_chunk = sentence if sentence and len(sentence[-1].encode("utf-8")) == 1 else sentence
 
     if current_chunk:
         chunks.append(current_chunk.strip())
@@ -111,8 +111,13 @@ def load_vocoder(vocoder_name="vocos", is_local=False, local_path="", device=dev
         else:
             print("Download Vocos from huggingface charactr/vocos-mel-24khz")
             repo_id = "charactr/vocos-mel-24khz"
-            config_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="config.yaml")
-            model_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="pytorch_model.bin")
+            
+            # config_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="config.yaml")
+            # model_path = hf_hub_download(repo_id=repo_id, cache_dir=hf_cache_dir, filename="pytorch_model.bin")
+            config_path="/home/yuxiongxiong/.cache/huggingface/hub/models--charactr--vocos-mel-24khz/snapshots/0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21/config.yaml"
+            model_path="/home/yuxiongxiong/.cache/huggingface/hub/models--charactr--vocos-mel-24khz/snapshots/0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21/pytorch_model.bin"
+            # print(config_path, model_path)
+            # abort
         vocoder = Vocos.from_hparams(config_path)
         state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
         from vocos.feature_extractors import EncodecFeatures
@@ -253,7 +258,9 @@ def load_model(
 
     vocab_char_map, vocab_size = get_tokenizer(vocab_file, tokenizer)
     model = CFM(
-        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
+        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels, 
+        # lang_num=2
+        ),
         mel_spec_kwargs=dict(
             n_fft=n_fft,
             hop_length=hop_length,
@@ -266,6 +273,7 @@ def load_model(
             method=ode_method,
         ),
         vocab_char_map=vocab_char_map,
+
     ).to(device)
 
     dtype = torch.float32 if mel_spec_type == "bigvgan" else None
@@ -371,7 +379,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, show_info=print):
         else:
             ref_text += ". "
 
-    print("\nref_text  ", ref_text)
+    # print("\nref_text  ", ref_text)
 
     return ref_audio, ref_text
 
@@ -396,14 +404,15 @@ def infer_process(
     speed=speed,
     fix_duration=fix_duration,
     device=device,
+    lang=None,
 ):
     # Split the input text into batches
     audio, sr = torchaudio.load(ref_audio)
     max_chars = int(len(ref_text.encode("utf-8")) / (audio.shape[-1] / sr) * (22 - audio.shape[-1] / sr) * speed)
     gen_text_batches = chunk_text(gen_text, max_chars=max_chars)
-    for i, gen_text in enumerate(gen_text_batches):
-        print(f"gen_text {i}", gen_text)
-    print("\n")
+    # for i, gen_text in enumerate(gen_text_batches):
+    #     print(f"gen_text {i}", gen_text)
+    # print("\n")
 
     show_info(f"Generating audio in {len(gen_text_batches)} batches...")
     return next(
@@ -423,6 +432,7 @@ def infer_process(
             speed=speed,
             fix_duration=fix_duration,
             device=device,
+            lang=lang,
         )
     )
 
@@ -448,6 +458,7 @@ def infer_batch_process(
     device=None,
     streaming=False,
     chunk_size=2048,
+    lang=None,
 ):
     audio, sr = ref_audio
     if audio.shape[0] > 1:
@@ -475,6 +486,7 @@ def infer_batch_process(
         # Prepare the text
         text_list = [ref_text + gen_text]
         final_text_list = convert_char_to_pinyin(text_list)
+        print(final_text_list)
 
         ref_audio_len = audio.shape[-1] // hop_length
         if fix_duration is not None:
@@ -494,6 +506,7 @@ def infer_batch_process(
                 steps=nfe_step,
                 cfg_strength=cfg_strength,
                 sway_sampling_coef=sway_sampling_coef,
+                lang=lang,
             )
             del _
 
@@ -562,6 +575,7 @@ def infer_batch_process(
 
                     # Cross-faded overlap
                     cross_faded_overlap = prev_overlap * fade_out + next_overlap * fade_in
+                    # cross_faded_overlap = np.concatenate([prev_overlap * fade_out , next_overlap * fade_in])
 
                     # Combine
                     new_wave = np.concatenate(
@@ -585,6 +599,7 @@ def infer_batch_process(
 def remove_silence_for_generated_wav(filename):
     aseg = AudioSegment.from_file(filename)
     non_silent_segs = silence.split_on_silence(
+        # aseg, min_silence_len=200, silence_thresh=-50, keep_silence=10, seek_step=10
         aseg, min_silence_len=1000, silence_thresh=-50, keep_silence=500, seek_step=10
     )
     non_silent_wave = AudioSegment.silent(duration=0)

@@ -92,6 +92,7 @@ class CustomDataset(Dataset):
         mel_spec_type="vocos",
         preprocessed_mel=False,
         mel_spec_module: nn.Module | None = None,
+        use_lang=False,
     ):
         self.data = custom_dataset
         self.durations = durations
@@ -101,6 +102,7 @@ class CustomDataset(Dataset):
         self.win_length = win_length
         self.mel_spec_type = mel_spec_type
         self.preprocessed_mel = preprocessed_mel
+        self.use_lang=use_lang
 
         if not preprocessed_mel:
             self.mel_spectrogram = default(
@@ -132,6 +134,9 @@ class CustomDataset(Dataset):
             text = row["text"]
             duration = row["duration"]
 
+            lang=None
+            if self.use_lang:
+                lang = row["lang"]
             # filter by given length
             if 0.3 <= duration <= 30:
                 break  # valid
@@ -159,6 +164,7 @@ class CustomDataset(Dataset):
         return {
             "mel_spec": mel_spec,
             "text": text,
+            "lang": lang,
         }
 
 
@@ -247,6 +253,7 @@ def load_dataset(
     audio_type: str = "raw",
     mel_spec_module: nn.Module | None = None,
     mel_spec_kwargs: dict = dict(),
+    use_lang=False,
 ) -> CustomDataset | HFDataset:
     """
     dataset_type    - "CustomDataset" if you want to use tokenizer name and default data path to load for train_dataset
@@ -274,6 +281,7 @@ def load_dataset(
             durations=durations,
             preprocessed_mel=preprocessed_mel,
             mel_spec_module=mel_spec_module,
+            use_lang=use_lang,
             **mel_spec_kwargs,
         )
 
@@ -288,6 +296,7 @@ def load_dataset(
         durations = data_dict["duration"]
         train_dataset = CustomDataset(
             train_dataset, durations=durations, preprocessed_mel=preprocessed_mel, **mel_spec_kwargs
+            , use_lang=use_lang, 
         )
 
     elif dataset_type == "HFDataset":
@@ -322,9 +331,13 @@ def collate_fn(batch):
     text = [item["text"] for item in batch]
     text_lengths = torch.LongTensor([len(item) for item in text])
 
+    langs=[item.get("lang", None) for item in batch]
+    langs=[f for f in langs if f is not None]
+    
     return dict(
         mel=mel_specs,
         mel_lengths=mel_lengths,  # records for padding mask
         text=text,
         text_lengths=text_lengths,
+        lang=langs,
     )

@@ -1,0 +1,3 @@
+accelerate launch /data/tts/F5-TTS/src/f5_tts/train/finetune_cli.py --batch_size_per_gpu 2048 --finetune --tokenizer char --logger tensorboard --dataset_name ru
+accelerate launch /data/tts/F5-TTS/src/f5_tts/train/finetune_cli.py --batch_size_per_gpu 2048 --tokenizer char --logger tensorboard --dataset_name lesmis
+accelerate launch /data/tts/F5-TTS/src/f5_tts/train/finetune_cli.py --batch_size_per_gpu 2048 --tokenizer char --logger tensorboard --dataset_name en_fr --use_lang --finetune

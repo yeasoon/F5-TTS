@@ -21,13 +21,16 @@ def main():
     with open(meta_info, "r") as f:
         lines = f.readlines()
         for line in tqdm(lines):
-            uttr, text, norm_text = line.split("|")
+            lang, uttr, text, norm_text = line.split("|")
             norm_text = norm_text.strip()
-            wav_path = Path(dataset_dir) / "wavs" / f"{uttr}.wav"
+            # norm_text = norm_text.replace("’", "")
+
+            wav_path = f"{uttr}"
             duration = sf.info(wav_path).duration
             if duration < 0.4 or duration > 30:
                 continue
-            result.append({"audio_path": str(wav_path), "text": norm_text, "duration": duration})
+            
+            result.append({"audio_path": str(wav_path), "text": norm_text, "duration": duration, "lang":lang})
             duration_list.append(duration)
             text_vocab_set.update(list(norm_text))
 
@@ -57,12 +60,15 @@ def main():
 
 
 if __name__ == "__main__":
-    tokenizer = "pinyin"  # "pinyin" | "char"
+    tokenizer = "char"  # "pinyin" | "char"
 
     # dataset_dir = "<SOME_PATH>/LJSpeech-1.1"
-    dataset_dir="/data/tts/F5-TTS/dataset/LJSpeech/LJSpeech-1.1"
-    dataset_name = f"LJSpeech_{tokenizer}"
-    meta_info = os.path.join(dataset_dir, "metadata.csv")
+    dataset_dir="/data/tts/F5-TTS/dataset/multi_lingo"
+    dataset_name = f"en_fr_{tokenizer}"
+    # gen meta_info
+    # do saomething
+    #
+    meta_info = os.path.join(dataset_dir, "metadata.txt")
     save_dir = str(files("f5_tts").joinpath("../../")) + f"/data/{dataset_name}"
     print(f"\nPrepare for {dataset_name}, will save to {save_dir}\n")
 

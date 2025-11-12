@@ -53,6 +53,7 @@ class Trainer:
         is_local_vocoder: bool = False,  # use local path vocoder
         local_vocoder_path: str = "",  # local vocoder path
         model_cfg_dict: dict = dict(),  # training config
+        use_lang=False,
     ):
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
@@ -67,6 +68,7 @@ class Trainer:
             **accelerate_kwargs,
         )
 
+        self.use_lang=use_lang
         self.logger = logger
         if self.logger == "wandb":
             if exists(wandb_resume_id):
@@ -224,9 +226,12 @@ class Trainer:
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
             if key in checkpoint["ema_model_state_dict"]:
                 del checkpoint["ema_model_state_dict"][key]
-
+            
+        strict= self.use_lang==False
+        if "update" in checkpoint or "step" in checkpoint:
+            strict=True
         if self.is_main:
-            self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+            self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"], strict= strict)
 
         if "update" in checkpoint or "step" in checkpoint:
             # patch for backward compatibility, with before f992c4e
@@ -252,7 +257,7 @@ class Trainer:
                 for k, v in checkpoint["ema_model_state_dict"].items()
                 if k not in ["initted", "update", "step"]
             }
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"], strict=strict)
             update = 0
 
         del checkpoint
@@ -314,6 +319,7 @@ class Trainer:
             self.num_warmup_updates * self.accelerator.num_processes
         )  # consider a fixed warmup steps while using accelerate multi-gpu ddp
         # otherwise by default with split_batches=False, warmup steps change with num_processes
+        self.epochs = 200
         total_updates = math.ceil(len(train_dataloader) / self.grad_accumulation_steps) * self.epochs
         decay_updates = total_updates - warmup_updates
         warmup_scheduler = LinearLR(self.optimizer, start_factor=1e-8, end_factor=1.0, total_iters=warmup_updates)
@@ -363,6 +369,9 @@ class Trainer:
                     mel_spec = batch["mel"].permute(0, 2, 1)
                     mel_lengths = batch["mel_lengths"]
 
+                    lang_inputs=None
+                    if self.use_lang:
+                        lang_inputs=batch["lang"]
                     # TODO. add duration predictor training
                     if self.duration_predictor is not None and self.accelerator.is_local_main_process:
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get("durations"))
@@ -370,6 +379,7 @@ class Trainer:
 
                     loss, cond, pred = self.model(
                         mel_spec, text=text_inputs, lens=mel_lengths, noise_scheduler=self.noise_scheduler
+                        , lang=lang_inputs
                     )
                     self.accelerator.backward(loss)
 
@@ -396,11 +406,12 @@ class Trainer:
                         self.writer.add_scalar("loss", loss.item(), global_update)
                         self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_update)
 
-                if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:
-                    self.save_checkpoint(global_update, last=True)
-
+                # if global_update % self.last_per_updates == 0 and self.accelerator.sync_gradients:
+                #     self.save_checkpoint(global_update, last=True)
+                # if global_update%1000 ==0:
+                #     self.save_checkpoint(global_update, last=True)
                 if global_update % self.save_per_updates == 0 and self.accelerator.sync_gradients:
-                    self.save_checkpoint(global_update)
+                    # self.save_checkpoint(global_update)
 
                     if self.log_samples and self.accelerator.is_local_main_process:
                         ref_audio_len = mel_lengths[0]
@@ -433,7 +444,11 @@ class Trainer:
                             f"{log_samples_path}/update_{global_update}_ref.wav", ref_audio, target_sample_rate
                         )
                         self.model.train()
-
+                        
+            if epoch%10==0 and self.accelerator.sync_gradients:
+                self.save_checkpoint(epoch)
+            if self.accelerator.sync_gradients:
+                self.save_checkpoint(global_update, last=True)
         self.save_checkpoint(global_update, last=True)
 
         self.accelerator.end_training()

@@ -27,6 +27,7 @@ from f5_tts.model.utils import (
     list_str_to_idx,
     list_str_to_tensor,
     mask_from_frac_lengths,
+    lang_to_id,
 )
 
 
@@ -47,6 +48,7 @@ class CFM(nn.Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str:int] | None = None,
+        # lora: nn.Module | None = None,
     ):
         super().__init__()
 
@@ -74,6 +76,12 @@ class CFM(nn.Module):
 
         # vocab map for tokenization
         self.vocab_char_map = vocab_char_map
+        self.lang_map={
+            "en":0,
+            "fr":1,
+        }
+        # if lora not None:
+        #     self.lora=lora
 
     @property
     def device(self):
@@ -98,6 +106,7 @@ class CFM(nn.Module):
         duplicate_test=False,
         t_inter=0.1,
         edit_mask=None,
+        lang=None,
     ):
         self.eval()
         # raw wave
@@ -108,7 +117,7 @@ class CFM(nn.Module):
             assert cond.shape[-1] == self.num_channels
 
         cond = cond.to(next(self.parameters()).dtype)
-
+        # print(cond.shape)
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
         if not exists(lens):
             lens = torch.full((batch,), cond_seq_len, device=device, dtype=torch.long)
@@ -121,7 +130,10 @@ class CFM(nn.Module):
             else:
                 text = list_str_to_tensor(text).to(device)
             assert text.shape[0] == batch
-
+        
+        if not lang==None:
+            lang = lang_to_id(lang, self.lang_map).to(device)
+            assert lang.shape[0] == batch
         # duration
 
         cond_mask = lens_to_mask(lens)
@@ -173,6 +185,7 @@ class CFM(nn.Module):
                     drop_audio_cond=False,
                     drop_text=False,
                     cache=True,
+                    lang=lang,
                 )
                 return pred
 
@@ -234,6 +247,7 @@ class CFM(nn.Module):
         *,
         lens: int["b"] | None = None,  # noqa: F821
         noise_scheduler: str | None = None,
+        lang=None,
     ):
         # handle raw wave
         if inp.ndim == 2:
@@ -250,6 +264,9 @@ class CFM(nn.Module):
             else:
                 text = list_str_to_tensor(text).to(device)
             assert text.shape[0] == batch
+        if not lang==None:
+            lang = lang_to_id(lang, self.lang_map).to(device)
+            assert lang.shape[0] == batch
 
         # lens and mask
         if not exists(lens):
@@ -293,10 +310,13 @@ class CFM(nn.Module):
         # apply mask will use more memory; might adjust batchsize or batchsampler long sequence threshold
         pred = self.transformer(
             x=φ, cond=cond, text=text, time=time, drop_audio_cond=drop_audio_cond, drop_text=drop_text, mask=mask
+            ,lang=lang,
         )
 
         # flow matching loss
         loss = F.mse_loss(pred, flow, reduction="none")
+        # loss = F.kl_div(pred, flow, reduction="none")
+        
         loss = loss[rand_span_mask]
 
         return loss.mean(), cond, pred
