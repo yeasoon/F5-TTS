@@ -260,6 +260,7 @@ def load_model(
     model = CFM(
         transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=n_mel_channels, 
         # lang_num=2
+
         ),
         mel_spec_kwargs=dict(
             n_fft=n_fft,
@@ -437,9 +438,41 @@ def infer_process(
     )
 
 
-# infer batches
+import torch
+def change_speed_mel_torch(mel: torch.Tensor, speed_factor: float) -> torch.Tensor:
+    # Ensure batch dimension
+    if mel.dim() == 2:
+        mel = mel.unsqueeze(0)  # [1, n_mels, T]
 
+    B, F, T = mel.shape
+    T_new = int(T / speed_factor)
 
+    # Interpolate along time axis
+    mel_new = torch.nn.functional.interpolate(
+        mel, size=T_new, mode='linear', align_corners=True
+    )
+    
+    return mel_new
+
+def edit_mel(mel):
+    enlarge_sound=2
+    mel=mel+enlarge_sound
+    # mel=change_speed_mel_torch(mel, 1.2)
+
+    return mel
+
+def extract_f0(audio, sr):
+    import torchaudio
+    print(audio.shape)
+    f0 = torchaudio.functional.detect_pitch_frequency(
+        waveform=audio,
+        sample_rate=sr,
+        frame_time=0.01,   # 10 ms hop
+        win_length=1024
+    )
+    # f0 = f0 * voiced # zero out unvoiced regions
+    print(f0.shape)
+    return f0
 def infer_batch_process(
     ref_audio,
     ref_text,
@@ -513,6 +546,7 @@ def infer_batch_process(
             generated = generated.to(torch.float32)  # generated mel spectrogram
             generated = generated[:, ref_audio_len:, :]
             generated = generated.permute(0, 2, 1)
+            # generated = edit_mel(generated)
             if mel_spec_type == "vocos":
                 generated_wave = vocoder.decode(generated)
             elif mel_spec_type == "bigvgan":
@@ -521,8 +555,9 @@ def infer_batch_process(
                 generated_wave = generated_wave * rms / target_rms
 
             # wav -> numpy
+            # extract_f0(generated_wave, target_sample_rate)
             generated_wave = generated_wave.squeeze().cpu().numpy()
-
+            
             if streaming:
                 for j in range(0, len(generated_wave), chunk_size):
                     yield generated_wave[j : j + chunk_size], target_sample_rate
